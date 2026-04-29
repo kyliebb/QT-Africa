@@ -9,7 +9,7 @@ Planning dashboard for managing dealer audit assignments across South Africa and
 - **Dealer list** — filterable/sortable table with inline auditor assignment and duplicate flagging
 - **Summary dashboard** — dealer counts by province and bank, auditor overview
 - **Auditor management** — create/edit/delete placeholder auditors with province and colour
-- **Online persistence** — all assignments saved to Supabase, accessible from any device
+- **Online persistence** — all assignments saved to Supabase, accessible from any device, New line 
 
 ---
 
