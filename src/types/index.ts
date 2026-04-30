@@ -30,6 +30,7 @@ export interface Dealer {
   full_address: string | null
   google_maps_url: string | null
   place_id: string | null
+  dealer_code: string | null
   enriched: boolean
   is_duplicate: boolean
   duplicate_tag: string | null

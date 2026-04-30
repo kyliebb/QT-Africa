@@ -19,6 +19,7 @@ create table if not exists dealers (
   full_address      text,
   google_maps_url   text,
   place_id          text,
+  dealer_code       text,
   enriched          boolean default false,
   is_duplicate      boolean default false,
   duplicate_tag     text,

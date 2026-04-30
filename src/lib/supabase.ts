@@ -14,9 +14,21 @@ export interface Database {
 
 // Dealers
 export const fetchDealers = async (): Promise<Dealer[]> => {
-  const { data, error } = await supabase.from('dealers').select('*').order('name')
-  if (error) throw error
-  return data ?? []
+  const PAGE = 1000
+  const all: Dealer[] = []
+  let from = 0
+  while (true) {
+    const { data, error } = await supabase
+      .from('dealers')
+      .select('*')
+      .order('name')
+      .range(from, from + PAGE - 1)
+    if (error) throw error
+    all.push(...(data ?? []))
+    if (!data || data.length < PAGE) break
+    from += PAGE
+  }
+  return all
 }
 
 export const updateDealer = async (id: string, patch: Partial<Dealer>): Promise<void> => {

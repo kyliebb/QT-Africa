@@ -1,12 +1,14 @@
 import { useState, useMemo } from 'react'
-import { LayoutDashboard, Map, List, Users, RefreshCw, AlertCircle } from 'lucide-react'
+import { LayoutDashboard, Map, List, Users, RefreshCw, AlertCircle, MapPin, ExternalLink, Pencil } from 'lucide-react'
 import { useData } from './hooks/useData'
 import SummaryCards from './components/SummaryCards'
 import FilterBar from './components/FilterBar'
 import DealerList from './components/DealerList'
 import DealerMap from './components/DealerMap'
 import AuditorPanel from './components/AuditorPanel'
+import LocationEditModal from './components/LocationEditModal'
 import type { FilterState, Dealer } from './types'
+import { BANKS } from './types'
 
 type Tab = 'overview' | 'map' | 'list' | 'auditors'
 
@@ -29,6 +31,8 @@ export default function App() {
   const [filters, setFilters] = useState<FilterState>(DEFAULT_FILTERS)
   const [proximityKm, setProximityKm] = useState(35)
   const [focusDealer, setFocusDealer] = useState<Dealer | null>(null)
+  const [mapFocusedDealer, setMapFocusedDealer] = useState<Dealer | null>(null)
+  const [editingLocationDealer, setEditingLocationDealer] = useState<Dealer | null>(null)
 
   const filteredDealers = useMemo(() => {
     return dealers.filter(d => {
@@ -156,6 +160,14 @@ export default function App() {
         )}
 
         {tab === 'map' && (
+          <>
+          {editingLocationDealer && (
+            <LocationEditModal
+              dealer={editingLocationDealer}
+              onSave={patch => patchDealer(editingLocationDealer.id, patch)}
+              onClose={() => setEditingLocationDealer(null)}
+            />
+          )}
           <div className="grid grid-cols-1 lg:grid-cols-4 gap-4" style={{ height: 'calc(100vh - 130px)' }}>
             <div className="lg:col-span-3 flex flex-col">
               <DealerMap
@@ -167,9 +179,79 @@ export default function App() {
                 onProximityKmChange={setProximityKm}
                 onBulkAssign={bulkAssign}
                 onAssign={assign}
+                onDealerFocus={d => setMapFocusedDealer(d)}
               />
             </div>
             <div className="space-y-3 overflow-y-auto">
+              {/* Dealer info panel */}
+              {mapFocusedDealer && (() => {
+                const d = dealers.find(x => x.id === mapFocusedDealer.id) ?? mapFocusedDealer
+                const bank = BANKS.find(b => b.value === d.bank)
+                const auditorId = assignments.get(d.id)
+                const auditor = auditors.find(a => a.id === auditorId)
+                return (
+                  <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-3 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="font-semibold text-slate-800 text-sm truncate">{d.name}</p>
+                        {d.dealer_code && (
+                          <p className="font-mono text-xs text-slate-400">{d.dealer_code}</p>
+                        )}
+                      </div>
+                      <button
+                        onClick={() => setEditingLocationDealer(d)}
+                        className="shrink-0 p-1.5 rounded-lg hover:bg-amber-50 text-slate-400 hover:text-amber-600 transition-colors"
+                        title="Edit location"
+                      >
+                        <Pencil size={14} />
+                      </button>
+                    </div>
+
+                    <div className="text-xs text-slate-600 space-y-1">
+                      <div className="flex items-center gap-1.5">
+                        <MapPin size={11} className="text-slate-400 shrink-0" />
+                        <span>{d.city}, {d.province}</span>
+                      </div>
+                      {d.full_address && (
+                        <p className="text-slate-400 pl-4 leading-tight">{d.full_address}</p>
+                      )}
+                    </div>
+
+                    <div className="flex items-center gap-2 flex-wrap">
+                      <span
+                        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white"
+                        style={{ backgroundColor: bank?.colour ?? '#94a3b8' }}
+                      >
+                        {bank?.label ?? d.bank}
+                      </span>
+                      <span className="text-xs text-slate-500">{d.audit_frequency}d frequency</span>
+                    </div>
+
+                    {auditor && (
+                      <div className="flex items-center gap-1.5 text-xs">
+                        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: auditor.colour }} />
+                        <span className="text-slate-600">{auditor.name}</span>
+                      </div>
+                    )}
+
+                    {d.lat && d.lng && (
+                      <p className="text-xs font-mono text-slate-400">{d.lat.toFixed(5)}, {d.lng.toFixed(5)}</p>
+                    )}
+
+                    {d.google_maps_url && (
+                      <a
+                        href={d.google_maps_url}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
+                      >
+                        <ExternalLink size={11} /> Open in Google Maps
+                      </a>
+                    )}
+                  </div>
+                )
+              })()}
+
               <FilterBar
                 filters={filters}
                 auditors={auditors}
@@ -185,6 +267,7 @@ export default function App() {
               />
             </div>
           </div>
+          </>
         )}
 
         {tab === 'list' && (

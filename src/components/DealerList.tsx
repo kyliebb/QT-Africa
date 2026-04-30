@@ -1,7 +1,8 @@
 import { useState } from 'react'
-import { MapPin, ExternalLink, AlertTriangle, Tag, ChevronUp, ChevronDown } from 'lucide-react'
+import { MapPin, ExternalLink, AlertTriangle, Tag, ChevronUp, ChevronDown, Pencil } from 'lucide-react'
 import type { Dealer, Auditor } from '../types'
 import { BANKS } from '../types'
+import LocationEditModal from './LocationEditModal'
 
 interface Props {
   dealers: Dealer[]
@@ -21,6 +22,7 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [editingTag, setEditingTag] = useState<string | null>(null)
   const [tagInput, setTagInput] = useState('')
+  const [editingLocation, setEditingLocation] = useState<Dealer | null>(null)
   const [page, setPage] = useState(0)
   const PAGE_SIZE = 50
 
@@ -42,11 +44,20 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
   const bankFor = (bank: string) => BANKS.find(b => b.value === bank)
 
   return (
+    <>
+    {editingLocation && (
+      <LocationEditModal
+        dealer={editingLocation}
+        onSave={patch => onPatchDealer(editingLocation.id, patch)}
+        onClose={() => setEditingLocation(null)}
+      />
+    )}
     <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
             <tr className="bg-slate-50 border-b border-slate-200">
+              <th className="px-3 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">Code</th>
               <Th label="Dealer" sortKey="name" current={sortKey} dir={sortDir} onSort={toggleSort} />
               <Th label="City" sortKey="city" current={sortKey} dir={sortDir} onSort={toggleSort} />
               <Th label="Province" sortKey="province" current={sortKey} dir={sortDir} onSort={toggleSort} />
@@ -65,6 +76,11 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
 
               return (
                 <tr key={dealer.id} className="hover:bg-slate-50 transition-colors">
+                  {/* Code */}
+                  <td className="px-3 py-2 whitespace-nowrap">
+                    <span className="font-mono text-xs text-slate-400">{dealer.dealer_code ?? '—'}</span>
+                  </td>
+
                   {/* Name */}
                   <td className="px-3 py-2 max-w-48">
                     <div className="flex items-center gap-1.5">
@@ -184,6 +200,13 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
                           <ExternalLink size={14} />
                         </a>
                       )}
+                      <button
+                        onClick={() => setEditingLocation(dealer)}
+                        className="p-1 text-slate-400 hover:text-amber-600 transition-colors"
+                        title="Edit location"
+                      >
+                        <Pencil size={14} />
+                      </button>
                     </div>
                   </td>
                 </tr>
@@ -218,6 +241,7 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
         </div>
       )}
     </div>
+    </>
   )
 }
 

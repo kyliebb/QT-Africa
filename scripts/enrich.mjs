@@ -19,6 +19,7 @@ import path from 'path'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const API_KEY = process.env.GOOGLE_PLACES_API_KEY
 if (!API_KEY) { console.error('Set GOOGLE_PLACES_API_KEY env var'); process.exit(1) }
+const LIMIT = process.env.LIMIT ? parseInt(process.env.LIMIT) : Infinity
 
 // Province detection from city name
 const PROVINCE_MAP = {
@@ -109,7 +110,7 @@ async function geocode(name, city) {
 function sleep(ms) { return new Promise(r => setTimeout(r, ms)) }
 
 async function main() {
-  const csvPath = path.resolve(__dirname, '../Resources /Quik Trak Africa  - WesBank locations.csv')
+  const csvPath = path.resolve(__dirname, '../Resources/Quik Trak Africa  - WesBank locations.csv')
   const outputDir = path.resolve(__dirname, '../output')
   if (!existsSync(outputDir)) mkdirSync(outputDir)
 
@@ -127,7 +128,7 @@ async function main() {
   const dealers = []
   let enriched = 0, skipped = 0
 
-  for (let i = 0; i < rows.length; i++) {
+  for (let i = 0; i < Math.min(rows.length, LIMIT); i++) {
     const row = rows[i]
     const name = row['Dealer Name']?.trim() ?? ''
     const city = cleanCity(row['City'])
@@ -160,11 +161,10 @@ async function main() {
       id: crypto.randomUUID(),
       name,
       city,
-      province: geoData?.lat
-        ? detectProvince(city)
-        : detectProvince(city),
+      province: detectProvince(city),
       country: 'ZA',
       bank: 'wesbank',
+      dealer_code: `WB-${String(i + 1).padStart(5, '0')}`,
       audit_frequency: fq,
       qty: parseInt(row['Qty']) || null,
       lat: geoData?.lat ?? null,
@@ -177,9 +177,13 @@ async function main() {
       duplicate_tag: null,
     }
     dealers.push(dealer)
+
+    // Checkpoint every 100 rows so progress is never lost
+    if (dealers.length % 100 === 0) {
+      writeFileSync(outputPath, JSON.stringify(dealers, null, 2))
+    }
   }
 
-  const outputPath = path.join(outputDir, 'dealers-wesbank.json')
   writeFileSync(outputPath, JSON.stringify(dealers, null, 2))
   console.log(`\nDone! ${enriched} geocoded, ${skipped} already had GPS, ${rows.length - enriched - skipped} not found.`)
   console.log(`Output: ${outputPath}`)

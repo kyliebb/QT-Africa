@@ -13,9 +13,9 @@ interface Props {
   onProximityKmChange: (km: number) => void
   onBulkAssign: (dealerIds: string[], auditorId: string) => Promise<void>
   onAssign: (dealerId: string, auditorId: string | null) => void
+  onDealerFocus: (dealer: Dealer | null) => void
 }
 
-// Leaflet is loaded dynamically to avoid SSR issues
 let L: typeof import('leaflet') | null = null
 
 function getBankColour(bank: string): string {
@@ -24,7 +24,7 @@ function getBankColour(bank: string): string {
 
 export default function DealerMap({
   dealers, auditors, assignments, focusDealer,
-  proximityKm, onProximityKmChange, onBulkAssign,
+  proximityKm, onProximityKmChange, onBulkAssign, onDealerFocus,
 }: Props) {
   const mapRef = useRef<LeafletMap | null>(null)
   const containerRef = useRef<HTMLDivElement>(null)
@@ -32,10 +32,10 @@ export default function DealerMap({
   const circleRef = useRef<Circle | null>(null)
   const [selectedDealer, setSelectedDealer] = useState<Dealer | null>(null)
   const [nearbyDealers, setNearbyDealers] = useState<Dealer[]>([])
+  const [excludedIds, setExcludedIds] = useState<Set<string>>(new Set())
   const [bulkAuditorId, setBulkAuditorId] = useState<string>('')
   const [leafletLoaded, setLeafletLoaded] = useState(false)
 
-  // Lazy-load Leaflet
   useEffect(() => {
     import('leaflet').then(mod => {
       L = mod.default
@@ -43,14 +43,10 @@ export default function DealerMap({
     })
   }, [])
 
-  // Initialise map
   useEffect(() => {
     if (!leafletLoaded || !L || !containerRef.current || mapRef.current) return
 
-    mapRef.current = L.map(containerRef.current, {
-      center: [-29, 25],
-      zoom: 6,
-    })
+    mapRef.current = L.map(containerRef.current, { center: [-29, 25], zoom: 6 })
 
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
       attribution: '© <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a>',
@@ -63,12 +59,10 @@ export default function DealerMap({
     }
   }, [leafletLoaded])
 
-  // Render dealer pins
   useEffect(() => {
     if (!mapRef.current || !L) return
     const map = mapRef.current
 
-    // Remove old markers
     markersRef.current.forEach(m => m.remove())
     markersRef.current.clear()
 
@@ -108,8 +102,9 @@ export default function DealerMap({
     const nearby = findNearby(dealer, dealers, proximityKm)
     setSelectedDealer(dealer)
     setNearbyDealers(nearby)
+    setExcludedIds(new Set())
+    onDealerFocus(dealer)
 
-    // Draw proximity circle
     circleRef.current?.remove()
     if (dealer.lat && dealer.lng) {
       circleRef.current = L.circle([dealer.lat, dealer.lng], {
@@ -122,7 +117,6 @@ export default function DealerMap({
       }).addTo(mapRef.current)
     }
 
-    // Highlight nearby pins
     markersRef.current.forEach((m, id) => {
       const isNearby = nearby.some(n => n.id === id)
       const isSelected = id === dealer.id
@@ -132,9 +126,8 @@ export default function DealerMap({
         radius: isSelected ? 10 : isNearby ? 8 : 6,
       } as L.CircleMarkerOptions)
     })
-  }, [dealers, proximityKm])
+  }, [dealers, proximityKm, onDealerFocus])
 
-  // Focus a dealer from outside (DealerList click)
   useEffect(() => {
     if (!focusDealer || !mapRef.current) return
     if (focusDealer.lat && focusDealer.lng) {
@@ -146,6 +139,8 @@ export default function DealerMap({
   const clearSelection = () => {
     setSelectedDealer(null)
     setNearbyDealers([])
+    setExcludedIds(new Set())
+    onDealerFocus(null)
     circleRef.current?.remove()
     circleRef.current = null
     markersRef.current.forEach(m => {
@@ -153,12 +148,25 @@ export default function DealerMap({
     })
   }
 
+  const toggleExclude = (id: string) => {
+    setExcludedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
   const handleBulkAssign = async () => {
     if (!selectedDealer || !bulkAuditorId) return
     const ids = [selectedDealer.id, ...nearbyDealers.map(d => d.id)]
+      .filter(id => !excludedIds.has(id))
     await onBulkAssign(ids, bulkAuditorId)
     clearSelection()
   }
+
+  const selectedCount = selectedDealer
+    ? 1 + nearbyDealers.length - excludedIds.size
+    : 0
 
   return (
     <div className="flex flex-col h-full gap-2">
@@ -166,11 +174,7 @@ export default function DealerMap({
       <div className="flex items-center gap-3 bg-white rounded-lg border border-slate-200 shadow-sm px-3 py-2">
         <span className="text-xs font-medium text-slate-600 whitespace-nowrap">Proximity radius</span>
         <input
-          type="range"
-          min={5}
-          max={200}
-          step={5}
-          value={proximityKm}
+          type="range" min={5} max={200} step={5} value={proximityKm}
           onChange={e => {
             onProximityKmChange(Number(e.target.value))
             if (selectedDealer) handleDealerClick(selectedDealer)
@@ -180,7 +184,7 @@ export default function DealerMap({
         <span className="text-sm font-semibold text-blue-600 w-16 text-right">{proximityKm} km</span>
       </div>
 
-      {/* Map container */}
+      {/* Map */}
       <div className="relative flex-1 rounded-lg overflow-hidden border border-slate-200 shadow-sm" style={{ minHeight: 400 }}>
         <div ref={containerRef} className="w-full h-full" />
 
@@ -211,17 +215,42 @@ export default function DealerMap({
           </div>
 
           <p className="text-xs text-blue-700">
-            <span className="font-semibold">{nearbyDealers.length}</span> dealers within {proximityKm} km
+            <span className="font-semibold">{nearbyDealers.length}</span> nearby within {proximityKm} km
+            {excludedIds.size > 0 && (
+              <span className="text-blue-500"> · {excludedIds.size} excluded</span>
+            )}
           </p>
 
           {nearbyDealers.length > 0 && (
-            <div className="max-h-24 overflow-y-auto space-y-0.5">
-              {nearbyDealers.map(d => (
-                <div key={d.id} className="flex items-center justify-between text-xs text-blue-800 bg-white rounded px-2 py-0.5">
-                  <span className="truncate flex-1">{d.name}</span>
-                  <span className="text-blue-400 ml-2">{d.city}</span>
-                </div>
-              ))}
+            <div className="max-h-36 overflow-y-auto space-y-0.5">
+              {/* Selected dealer row (always included, not excludable) */}
+              <div className="flex items-center gap-2 text-xs bg-blue-100 rounded px-2 py-1">
+                <input type="checkbox" checked readOnly className="accent-blue-600 cursor-default" />
+                <span className="font-medium text-blue-900 truncate flex-1">{selectedDealer.name}</span>
+                <span className="text-blue-500 shrink-0">{selectedDealer.city}</span>
+              </div>
+              {nearbyDealers.map(d => {
+                const excluded = excludedIds.has(d.id)
+                return (
+                  <div
+                    key={d.id}
+                    onClick={() => toggleExclude(d.id)}
+                    className={`flex items-center gap-2 text-xs rounded px-2 py-1 cursor-pointer select-none transition-colors ${
+                      excluded ? 'bg-white text-slate-400 line-through' : 'bg-white text-blue-800 hover:bg-blue-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={!excluded}
+                      onChange={() => toggleExclude(d.id)}
+                      onClick={e => e.stopPropagation()}
+                      className="accent-blue-600"
+                    />
+                    <span className="truncate flex-1">{d.name}</span>
+                    <span className={`shrink-0 ${excluded ? 'text-slate-300' : 'text-blue-400'}`}>{d.city}</span>
+                  </div>
+                )
+              })}
             </div>
           )}
 
@@ -233,17 +262,17 @@ export default function DealerMap({
                 onChange={e => setBulkAuditorId(e.target.value)}
                 className="flex-1 text-xs border border-blue-200 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
               >
-                <option value="">Assign group to auditor…</option>
+                <option value="">Assign to auditor…</option>
                 {auditors.map(a => (
                   <option key={a.id} value={a.id}>{a.name}</option>
                 ))}
               </select>
               <button
                 onClick={handleBulkAssign}
-                disabled={!bulkAuditorId}
+                disabled={!bulkAuditorId || selectedCount === 0}
                 className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap"
               >
-                Assign {nearbyDealers.length + 1}
+                Assign {selectedCount}
               </button>
             </div>
           )}
