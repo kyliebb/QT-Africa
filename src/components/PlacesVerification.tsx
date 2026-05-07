@@ -1,5 +1,5 @@
-import { useState, useEffect, useRef, useCallback } from 'react'
-import { Search, CheckCircle, AlertTriangle, HelpCircle, ExternalLink, ChevronLeft, ChevronRight, Loader2 } from 'lucide-react'
+import { useState, useEffect, useCallback } from 'react'
+import { Search, CheckCircle, AlertTriangle, HelpCircle, ExternalLink, ChevronLeft, ChevronRight, Loader2, AlertCircle } from 'lucide-react'
 import type { Dealer } from '../types'
 import { BANKS } from '../types'
 
@@ -20,6 +20,40 @@ interface Props {
 }
 
 const PAGE_SIZE = 20
+
+// Singleton loader — the Maps script must only be injected once
+let mapsState: 'idle' | 'loading' | 'ready' | 'error' = 'idle'
+const mapsWaiters: Array<(err?: Error) => void> = []
+
+function loadGoogleMaps(apiKey: string): Promise<void> {
+  return new Promise((resolve, reject) => {
+    if (mapsState === 'ready') { resolve(); return }
+    if (mapsState === 'error') { reject(new Error('Google Maps failed to load')); return }
+
+    mapsWaiters.push(err => err ? reject(err) : resolve())
+
+    if (mapsState === 'loading') return
+    mapsState = 'loading'
+
+    ;(window as any).__initGoogleMaps = () => {
+      mapsState = 'ready'
+      mapsWaiters.forEach(cb => cb())
+      mapsWaiters.length = 0
+    }
+
+    const script = document.createElement('script')
+    // loading=async avoids the sync-load performance warning
+    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&loading=async&callback=__initGoogleMaps`
+    script.async = true
+    script.onerror = () => {
+      mapsState = 'error'
+      const err = new Error('Failed to load Google Maps script')
+      mapsWaiters.forEach(cb => cb(err))
+      mapsWaiters.length = 0
+    }
+    document.head.appendChild(script)
+  })
+}
 
 function statusBadge(status: Dealer['places_status']) {
   if (status === 'verified') {
@@ -43,60 +77,27 @@ function statusBadge(status: Dealer['places_status']) {
   )
 }
 
-let mapsLoaded = false
-let mapsLoading = false
-const mapsCallbacks: Array<() => void> = []
-
-function loadGoogleMaps(apiKey: string): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (mapsLoaded) { resolve(); return }
-    mapsCallbacks.push(resolve)
-    if (mapsLoading) return
-    mapsLoading = true
-    const script = document.createElement('script')
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${apiKey}&libraries=places`
-    script.async = true
-    script.defer = true
-    script.onload = () => {
-      mapsLoaded = true
-      mapsCallbacks.forEach(cb => cb())
-      mapsCallbacks.length = 0
-    }
-    script.onerror = () => reject(new Error('Failed to load Google Maps'))
-    document.head.appendChild(script)
-  })
-}
-
 export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
   const [search, setSearch] = useState('')
   const [statusFilter, setStatusFilter] = useState<'all' | 'unverified' | 'verified' | 'flagged'>('all')
   const [page, setPage] = useState(0)
-  const [mapsReady, setMapsReady] = useState(mapsLoaded)
+  const [mapsReady, setMapsReady] = useState(mapsState === 'ready')
   const [mapsError, setMapsError] = useState<string | null>(null)
   const [checking, setChecking] = useState<Set<string>>(new Set())
   const [results, setResults] = useState<Map<string, PlacesResult[] | 'error'>>(new Map())
   const [saving, setSaving] = useState<Set<string>>(new Set())
-  const mapDivRef = useRef<HTMLDivElement>(null)
-  const placesServiceRef = useRef<any>(null)
 
   const apiKey = import.meta.env.VITE_GOOGLE_PLACES_API_KEY as string
 
   useEffect(() => {
     if (!apiKey) {
-      setMapsError('VITE_GOOGLE_PLACES_API_KEY not set')
+      setMapsError('VITE_GOOGLE_PLACES_API_KEY is not set. Add it to your .env file and Vercel environment variables.')
       return
     }
     loadGoogleMaps(apiKey)
       .then(() => setMapsReady(true))
       .catch(e => setMapsError(e.message))
   }, [apiKey])
-
-  useEffect(() => {
-    if (mapsReady && mapDivRef.current && !placesServiceRef.current) {
-      const map = new google.maps.Map(mapDivRef.current, { center: { lat: -29, lng: 25 }, zoom: 5 })
-      placesServiceRef.current = new google.maps.places.PlacesService(map)
-    }
-  }, [mapsReady])
 
   const filtered = dealers.filter(d => {
     if (statusFilter !== 'all' && (d.places_status ?? 'unverified') !== statusFilter) return false
@@ -110,29 +111,38 @@ export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
   const pageCount = Math.ceil(filtered.length / PAGE_SIZE)
   const pageDealers = filtered.slice(page * PAGE_SIZE, page * PAGE_SIZE + PAGE_SIZE)
 
-  const handleSearch = (v: string) => { setSearch(v); setPage(0) }
-  const handleFilter = (v: typeof statusFilter) => { setStatusFilter(v); setPage(0) }
-
-  const checkDealer = useCallback((dealer: Dealer) => {
-    if (!placesServiceRef.current) return
+  const checkDealer = useCallback(async (dealer: Dealer) => {
     setChecking(prev => new Set(prev).add(dealer.id))
-    const query = `${dealer.name} ${dealer.city} South Africa`
-    placesServiceRef.current.textSearch({ query }, (places: any[], status: string) => {
-      setChecking(prev => { const n = new Set(prev); n.delete(dealer.id); return n })
-      if (status !== 'OK' || !places?.length) {
+    try {
+      // Use the new Places API (available to all keys from March 2025)
+      const { Place } = await google.maps.importLibrary('places')
+      const query = `${dealer.name} ${dealer.city}`
+      const { places } = await Place.searchByText({
+        textQuery: query,
+        fields: ['displayName', 'formattedAddress', 'location', 'id'],
+        maxResultCount: 3,
+      })
+
+      if (!places?.length) {
         setResults(prev => new Map(prev).set(dealer.id, 'error'))
         return
       }
-      const mapped: PlacesResult[] = places.slice(0, 3).map((p: any) => ({
-        name: p.name,
-        formatted_address: p.formatted_address,
-        place_id: p.place_id,
-        lat: p.geometry.location.lat(),
-        lng: p.geometry.location.lng(),
-        maps_url: `https://www.google.com/maps/place/?q=place_id:${p.place_id}`,
+
+      const mapped: PlacesResult[] = places.map((p: any) => ({
+        name: p.displayName ?? '',
+        formatted_address: p.formattedAddress ?? '',
+        place_id: p.id ?? '',
+        lat: p.location.lat(),
+        lng: p.location.lng(),
+        maps_url: `https://www.google.com/maps/place/?q=place_id:${p.id}`,
       }))
       setResults(prev => new Map(prev).set(dealer.id, mapped))
-    })
+    } catch (e: any) {
+      console.error('Places search error:', e)
+      setResults(prev => new Map(prev).set(dealer.id, 'error'))
+    } finally {
+      setChecking(prev => { const n = new Set(prev); n.delete(dealer.id); return n })
+    }
   }, [])
 
   const confirm = async (dealer: Dealer, result: PlacesResult) => {
@@ -171,9 +181,6 @@ export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
 
   return (
     <div className="space-y-4">
-      {/* Hidden div required by PlacesService */}
-      <div ref={mapDivRef} style={{ width: 1, height: 1, position: 'absolute', top: -9999, left: -9999 }} />
-
       {/* Header */}
       <div className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
         <div>
@@ -184,8 +191,15 @@ export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
         </div>
 
         {mapsError && (
-          <div className="text-xs text-rose-600 bg-rose-50 border border-rose-100 rounded-lg px-3 py-2">
-            {mapsError}
+          <div className="flex items-start gap-2 text-xs text-rose-700 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">
+            <AlertCircle size={14} className="shrink-0 mt-0.5" />
+            <div>
+              <p className="font-medium">Google Maps could not load</p>
+              <p className="mt-0.5 text-rose-600">{mapsError}</p>
+              <p className="mt-1 text-rose-500">
+                Make sure <strong>Maps JavaScript API</strong> and <strong>Places API (New)</strong> are both enabled in Google Cloud Console for this API key.
+              </p>
+            </div>
           </div>
         )}
 
@@ -194,7 +208,7 @@ export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
           {(['all', 'unverified', 'verified', 'flagged'] as const).map(s => (
             <button
               key={s}
-              onClick={() => handleFilter(s)}
+              onClick={() => { setStatusFilter(s); setPage(0) }}
               className={`px-3 py-1 rounded-full text-xs font-medium border transition-colors ${
                 statusFilter === s
                   ? 'bg-blue-600 text-white border-blue-600'
@@ -214,7 +228,7 @@ export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
             type="text"
             placeholder="Search dealer name or city…"
             value={search}
-            onChange={e => handleSearch(e.target.value)}
+            onChange={e => { setSearch(e.target.value); setPage(0) }}
             className="w-full pl-8 pr-3 py-1.5 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
         </div>
@@ -235,7 +249,7 @@ export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
 
           return (
             <div key={dealer.id} className="bg-white rounded-xl border border-slate-200 p-4 space-y-3">
-              {/* Dealer header row */}
+              {/* Dealer header */}
               <div className="flex items-start justify-between gap-3">
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2 flex-wrap">
@@ -249,7 +263,7 @@ export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
                     {dealer.city}, {dealer.province}
                     {' · '}
                     <span
-                      className="inline-block px-1.5 py-0 rounded text-white text-xs"
+                      className="inline-block px-1.5 rounded text-white text-xs"
                       style={{ backgroundColor: bank?.colour ?? '#94a3b8' }}
                     >
                       {bank?.label ?? dealer.bank}
@@ -258,30 +272,24 @@ export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
                 </div>
 
                 <div className="flex items-center gap-2 shrink-0">
-                  {status === 'unverified' && result === undefined && (
+                  {result === undefined && (
                     <button
                       onClick={() => checkDealer(dealer)}
                       disabled={isChecking || !mapsReady}
-                      className="flex items-center gap-1.5 px-3 py-1.5 bg-blue-600 text-white text-xs font-medium rounded-lg hover:bg-blue-700 disabled:opacity-50 transition-colors"
+                      className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium rounded-lg disabled:opacity-50 transition-colors ${
+                        status === 'unverified'
+                          ? 'bg-blue-600 text-white hover:bg-blue-700'
+                          : 'border border-slate-200 text-slate-600 hover:bg-slate-50'
+                      }`}
                     >
                       {isChecking ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
-                      {isChecking ? 'Checking…' : 'Check Places'}
-                    </button>
-                  )}
-                  {(status === 'verified' || status === 'flagged') && result === undefined && (
-                    <button
-                      onClick={() => checkDealer(dealer)}
-                      disabled={isChecking || !mapsReady}
-                      className="flex items-center gap-1.5 px-3 py-1.5 border border-slate-200 text-slate-600 text-xs font-medium rounded-lg hover:bg-slate-50 disabled:opacity-50 transition-colors"
-                    >
-                      {isChecking ? <Loader2 size={12} className="animate-spin" /> : <Search size={12} />}
-                      Re-check
+                      {isChecking ? 'Checking…' : status === 'unverified' ? 'Check Places' : 'Re-check'}
                     </button>
                   )}
                 </div>
               </div>
 
-              {/* Current location data */}
+              {/* Current location data + Places results */}
               <div className="grid grid-cols-1 md:grid-cols-2 gap-3 text-xs">
                 <div className="bg-slate-50 rounded-lg p-3 space-y-1">
                   <p className="font-medium text-slate-600 mb-1">Current data</p>
@@ -297,43 +305,43 @@ export default function PlacesVerification({ dealers, onPatchDealer }: Props) {
                       )}
                     </>
                   ) : (
-                    <p className="text-slate-400 italic">No location data</p>
+                    <p className="text-slate-400 italic">No location data yet</p>
                   )}
                 </div>
 
-                {/* Places results */}
                 {result === 'error' && (
-                  <div className="bg-rose-50 rounded-lg p-3">
-                    <p className="font-medium text-rose-600 mb-1">No results found</p>
-                    <p className="text-rose-500">Google Places returned no matches for this dealer.</p>
+                  <div className="bg-rose-50 rounded-lg p-3 space-y-2">
+                    <p className="font-medium text-rose-600">No Places results found</p>
+                    <p className="text-rose-500">Google returned no matches for this dealer.</p>
                     <button
                       onClick={() => flagDealer(dealer)}
                       disabled={isSaving}
-                      className="mt-2 flex items-center gap-1 px-2.5 py-1 bg-amber-500 text-white text-xs font-medium rounded-lg hover:bg-amber-600 disabled:opacity-50"
+                      className="flex items-center gap-1 px-2.5 py-1 bg-amber-500 text-white text-xs font-medium rounded-lg hover:bg-amber-600 disabled:opacity-50"
                     >
-                      <AlertTriangle size={10} /> Flag as problem
+                      {isSaving ? <Loader2 size={10} className="animate-spin" /> : <AlertTriangle size={10} />}
+                      Flag as problem
                     </button>
                   </div>
                 )}
 
                 {Array.isArray(result) && (
                   <div className="space-y-2">
-                    <p className="font-medium text-slate-600 text-xs">Places results — select to confirm:</p>
+                    <p className="font-medium text-slate-600">Places results — select to confirm:</p>
                     {result.map((r, i) => (
                       <div key={r.place_id}
-                        className="border border-slate-200 rounded-lg p-3 space-y-1 hover:border-blue-300 transition-colors">
+                        className="border border-slate-200 rounded-lg p-3 space-y-1.5 hover:border-blue-300 transition-colors">
                         <div className="flex items-start justify-between gap-2">
                           <div className="min-w-0">
                             <p className="font-medium text-slate-800">{r.name}</p>
-                            <p className="text-slate-500">{r.formatted_address}</p>
+                            <p className="text-slate-500 leading-snug">{r.formatted_address}</p>
                             <p className="font-mono text-slate-400">{r.lat.toFixed(5)}, {r.lng.toFixed(5)}</p>
                           </div>
                           <a href={r.maps_url} target="_blank" rel="noopener noreferrer"
-                            className="shrink-0 text-blue-600 hover:text-blue-800">
+                            className="shrink-0 text-blue-600 hover:text-blue-800 mt-0.5">
                             <ExternalLink size={12} />
                           </a>
                         </div>
-                        <div className="flex gap-2 pt-1">
+                        <div className="flex gap-2 pt-0.5">
                           <button
                             onClick={() => confirm(dealer, r)}
                             disabled={isSaving}
