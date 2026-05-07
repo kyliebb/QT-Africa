@@ -143,9 +143,25 @@ const rows = dealers.map(d => ({
 // ── Insert ────────────────────────────────────────────────────────────────────
 console.log(`Importing ${rows.length} dealers…`)
 
+// Check which dealers already exist so we don't double-insert
+const names = rows.map(r => r.name)
+const { data: existing } = await supabase
+  .from('dealers')
+  .select('name')
+  .eq('bank', 'standardbank')
+  .in('name', names)
+
+const existingNames = new Set((existing ?? []).map(r => r.name))
+const toInsert = rows.filter(r => !existingNames.has(r.name))
+
+if (toInsert.length === 0) {
+  console.log('All dealers already exist — nothing to insert.')
+  process.exit(0)
+}
+
 const { data, error } = await supabase
   .from('dealers')
-  .upsert(rows, { onConflict: 'name,bank', ignoreDuplicates: false })
+  .insert(toInsert)
   .select('id, name, city')
 
 if (error) {
