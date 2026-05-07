@@ -1,16 +1,21 @@
-import { useState, useMemo } from 'react'
-import { LayoutDashboard, Map, List, Users, RefreshCw, AlertCircle, MapPin, ExternalLink, Pencil } from 'lucide-react'
+import { useState } from 'react'
+import { LayoutDashboard, Map, List, Users, RefreshCw, AlertCircle, MapPin, ExternalLink, Pencil, BarChart2, MapPinCheck, LogOut } from 'lucide-react'
 import { useData } from './hooks/useData'
+import { useAuth } from './hooks/useAuth'
+import { signOut } from './lib/auth'
 import SummaryCards from './components/SummaryCards'
 import FilterBar from './components/FilterBar'
 import DealerList from './components/DealerList'
 import DealerMap from './components/DealerMap'
 import AuditorPanel from './components/AuditorPanel'
+import AuditorWorkload from './components/AuditorWorkload'
 import LocationEditModal from './components/LocationEditModal'
+import LoginPage from './components/LoginPage'
+import PlacesVerification from './components/PlacesVerification'
 import type { FilterState, Dealer } from './types'
 import { BANKS } from './types'
 
-type Tab = 'overview' | 'map' | 'list' | 'auditors'
+type Tab = 'overview' | 'map' | 'list' | 'auditors' | 'workload' | 'places'
 
 const DEFAULT_FILTERS: FilterState = {
   bank: 'all',
@@ -22,6 +27,8 @@ const DEFAULT_FILTERS: FilterState = {
 }
 
 export default function App() {
+  const session = useAuth()
+
   const {
     dealers, auditors, assignments, loading, error, reload,
     addAuditor, editAuditor, removeAuditor, assign, bulkAssign, patchDealer,
@@ -34,21 +41,33 @@ export default function App() {
   const [mapFocusedDealer, setMapFocusedDealer] = useState<Dealer | null>(null)
   const [editingLocationDealer, setEditingLocationDealer] = useState<Dealer | null>(null)
 
-  const filteredDealers = useMemo(() => {
-    return dealers.filter(d => {
-      if (filters.bank !== 'all' && d.bank !== filters.bank) return false
-      if (filters.province !== 'all' && d.province !== filters.province) return false
-      if (filters.frequency !== 'all' && d.audit_frequency !== filters.frequency) return false
-      if (filters.showDuplicates && !d.is_duplicate) return false
-      if (filters.auditorId === 'unassigned' && assignments.has(d.id)) return false
-      if (filters.auditorId !== 'all' && filters.auditorId !== 'unassigned' && assignments.get(d.id) !== filters.auditorId) return false
-      if (filters.search) {
-        const q = filters.search.toLowerCase()
-        if (!d.name.toLowerCase().includes(q) && !d.city.toLowerCase().includes(q)) return false
-      }
-      return true
-    })
-  }, [dealers, filters, assignments])
+  // Still determining auth state
+  if (session === undefined) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-slate-100">
+        <div className="w-8 h-8 border-4 border-blue-600 border-t-transparent rounded-full animate-spin" />
+      </div>
+    )
+  }
+
+  // Not signed in — show login
+  if (session === null) {
+    return <LoginPage />
+  }
+
+  const filteredDealers = dealers.filter(d => {
+    if (filters.bank !== 'all' && d.bank !== filters.bank) return false
+    if (filters.province !== 'all' && d.province !== filters.province) return false
+    if (filters.frequency !== 'all' && d.audit_frequency !== filters.frequency) return false
+    if (filters.showDuplicates && !d.is_duplicate) return false
+    if (filters.auditorId === 'unassigned' && assignments.has(d.id)) return false
+    if (filters.auditorId !== 'all' && filters.auditorId !== 'unassigned' && assignments.get(d.id) !== filters.auditorId) return false
+    if (filters.search) {
+      const q = filters.search.toLowerCase()
+      if (!d.name.toLowerCase().includes(q) && !d.city.toLowerCase().includes(q)) return false
+    }
+    return true
+  })
 
   const handleSelectDealer = (dealer: Dealer) => {
     setFocusDealer(dealer)
@@ -102,12 +121,14 @@ export default function App() {
             </div>
           </div>
 
-          <nav className="flex gap-1">
+          <nav className="flex gap-1 flex-wrap">
             {([
               ['overview', 'Overview', LayoutDashboard],
               ['map', 'Map', Map],
               ['list', 'Dealers', List],
               ['auditors', 'Auditors', Users],
+              ['workload', 'Workload', BarChart2],
+              ['places', 'Places', MapPinCheck],
             ] as [Tab, string, React.ElementType][]).map(([id, label, Icon]) => (
               <button
                 key={id}
@@ -124,13 +145,22 @@ export default function App() {
             ))}
           </nav>
 
-          <button
-            onClick={reload}
-            className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
-            title="Refresh data"
-          >
-            <RefreshCw size={16} />
-          </button>
+          <div className="flex items-center gap-1">
+            <button
+              onClick={reload}
+              className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              title="Refresh data"
+            >
+              <RefreshCw size={16} />
+            </button>
+            <button
+              onClick={() => signOut()}
+              className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100"
+              title={`Sign out (${session.email})`}
+            >
+              <LogOut size={16} />
+            </button>
+          </div>
         </div>
       </header>
 
@@ -299,6 +329,23 @@ export default function App() {
               dealerCountFor={id => dealers.filter(d => assignments.get(d.id) === id).length}
             />
           </div>
+        )}
+
+        {tab === 'workload' && (
+          <AuditorWorkload
+            dealers={dealers}
+            auditors={auditors}
+            assignments={assignments}
+            onAssign={assign}
+            onPatchDealer={patchDealer}
+          />
+        )}
+
+        {tab === 'places' && (
+          <PlacesVerification
+            dealers={dealers}
+            onPatchDealer={patchDealer}
+          />
         )}
       </main>
     </div>

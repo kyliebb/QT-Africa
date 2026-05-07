@@ -34,6 +34,7 @@ export interface Dealer {
   enriched: boolean
   is_duplicate: boolean
   duplicate_tag: string | null
+  places_status?: 'unverified' | 'verified' | 'flagged'
   created_at?: string
 }
 
