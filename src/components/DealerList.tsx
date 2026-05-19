@@ -1,5 +1,8 @@
-import { useState } from 'react'
-import { MapPin, ExternalLink, AlertTriangle, Tag, ChevronUp, ChevronDown, Pencil, X, Check, LocateFixed } from 'lucide-react'
+import { useState, useEffect } from 'react'
+import {
+  MapPin, ExternalLink, AlertTriangle, Tag, ChevronUp, ChevronDown,
+  Pencil, X, Check, LocateFixed, CheckCircle, HelpCircle, Trash2,
+} from 'lucide-react'
 import type { Dealer, Auditor } from '../types'
 import { BANKS, AUDIT_FREQUENCIES } from '../types'
 import LocationEditModal from './LocationEditModal'
@@ -9,6 +12,8 @@ interface Props {
   auditors: Auditor[]
   assignments: Map<string, string>
   onAssign: (dealerId: string, auditorId: string | null) => void
+  onBulkAssign: (dealerIds: string[], auditorId: string) => Promise<void>
+  onBulkDelete: (dealerIds: string[]) => Promise<void>
   onPatchDealer: (id: string, patch: Partial<Dealer>) => void
   onSelectDealer: (dealer: Dealer) => void
 }
@@ -141,9 +146,27 @@ function Field({ label, children }: { label: string; children: React.ReactNode }
   )
 }
 
+// ─── Styled tooltip wrapper ───────────────────────────────────────────────────
+
+function Tip({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="relative group/tip">
+      {children}
+      <div className="pointer-events-none absolute bottom-full left-1/2 -translate-x-1/2 mb-1.5 z-20 opacity-0 group-hover/tip:opacity-100 transition-opacity duration-150">
+        <div className="bg-slate-800 text-white text-xs rounded px-2 py-1 whitespace-nowrap shadow-lg">
+          {label}
+        </div>
+        <div className="w-2 h-2 bg-slate-800 rotate-45 mx-auto -mt-1" />
+      </div>
+    </div>
+  )
+}
+
 // ─── DealerList ───────────────────────────────────────────────────────────────
 
-export default function DealerList({ dealers, auditors, assignments, onAssign, onPatchDealer, onSelectDealer }: Props) {
+export default function DealerList({
+  dealers, auditors, assignments, onAssign, onBulkAssign, onBulkDelete, onPatchDealer, onSelectDealer,
+}: Props) {
   const [sortKey, setSortKey] = useState<SortKey>('name')
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>('asc')
   const [editingTag, setEditingTag] = useState<string | null>(null)
@@ -151,7 +174,20 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
   const [editingLocation, setEditingLocation] = useState<Dealer | null>(null)
   const [editingDetails, setEditingDetails] = useState<Dealer | null>(null)
   const [page, setPage] = useState(0)
+
+  // Multi-select
+  const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set())
+  const [bulkAuditorId, setBulkAuditorId] = useState('')
+  const [confirmDelete, setConfirmDelete] = useState(false)
+  const [bulkLoading, setBulkLoading] = useState(false)
+
   const PAGE_SIZE = 50
+
+  // Clear selection when dealer list changes (filter/delete)
+  useEffect(() => {
+    setSelectedIds(new Set())
+    setConfirmDelete(false)
+  }, [dealers])
 
   const sorted = [...dealers].sort((a, b) => {
     const va = String(a[sortKey] ?? '')
@@ -170,6 +206,46 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
 
   const bankFor = (bank: string) => BANKS.find(b => b.value === bank)
 
+  // Select-all for current page
+  const allPageSelected = paginated.length > 0 && paginated.every(d => selectedIds.has(d.id))
+  const somePageSelected = paginated.some(d => selectedIds.has(d.id))
+
+  const toggleSelectAll = () => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      if (allPageSelected) {
+        paginated.forEach(d => next.delete(d.id))
+      } else {
+        paginated.forEach(d => next.add(d.id))
+      }
+      return next
+    })
+  }
+
+  const toggleSelectRow = (id: string) => {
+    setSelectedIds(prev => {
+      const next = new Set(prev)
+      next.has(id) ? next.delete(id) : next.add(id)
+      return next
+    })
+  }
+
+  const handleBulkAssign = async () => {
+    if (!bulkAuditorId || selectedIds.size === 0) return
+    setBulkLoading(true)
+    await onBulkAssign([...selectedIds], bulkAuditorId)
+    setBulkLoading(false)
+    setBulkAuditorId('')
+  }
+
+  const handleBulkDelete = async () => {
+    if (selectedIds.size === 0) return
+    setBulkLoading(true)
+    await onBulkDelete([...selectedIds])
+    setBulkLoading(false)
+    setConfirmDelete(false)
+  }
+
   return (
     <>
       {editingLocation && (
@@ -187,11 +263,86 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
         />
       )}
 
+      {/* Bulk action bar */}
+      {selectedIds.size > 0 && (
+        <div className="bg-blue-50 border border-blue-200 rounded-lg px-4 py-2.5 flex items-center gap-3 flex-wrap mb-2">
+          <span className="text-sm font-semibold text-blue-800">
+            {selectedIds.size} dealer{selectedIds.size !== 1 ? 's' : ''} selected
+          </span>
+
+          {/* Assign auditor */}
+          <div className="flex items-center gap-1.5">
+            <select
+              value={bulkAuditorId}
+              onChange={e => setBulkAuditorId(e.target.value)}
+              className="text-xs border border-blue-200 rounded px-2 py-1.5 bg-white focus:outline-none focus:ring-1 focus:ring-blue-500"
+            >
+              <option value="">Assign auditor…</option>
+              {auditors.map(a => <option key={a.id} value={a.id}>{a.name}</option>)}
+            </select>
+            <button
+              onClick={handleBulkAssign}
+              disabled={!bulkAuditorId || bulkLoading}
+              className="text-xs px-3 py-1.5 bg-blue-600 text-white rounded hover:bg-blue-700 disabled:opacity-40 whitespace-nowrap"
+            >
+              {bulkLoading ? 'Working…' : 'Assign'}
+            </button>
+          </div>
+
+          <div className="h-4 w-px bg-blue-200" />
+
+          {/* Delete */}
+          {confirmDelete ? (
+            <div className="flex items-center gap-1.5">
+              <span className="text-xs font-medium text-rose-700">Delete {selectedIds.size} dealers?</span>
+              <button
+                onClick={handleBulkDelete}
+                disabled={bulkLoading}
+                className="text-xs px-3 py-1.5 bg-rose-600 text-white rounded hover:bg-rose-700 disabled:opacity-40"
+              >
+                {bulkLoading ? 'Deleting…' : 'Confirm delete'}
+              </button>
+              <button
+                onClick={() => setConfirmDelete(false)}
+                className="text-xs px-2.5 py-1.5 border border-rose-200 rounded text-rose-600 hover:bg-rose-50"
+              >
+                Cancel
+              </button>
+            </div>
+          ) : (
+            <button
+              onClick={() => setConfirmDelete(true)}
+              className="flex items-center gap-1 text-xs px-3 py-1.5 border border-rose-200 text-rose-600 rounded hover:bg-rose-50 transition-colors"
+            >
+              <Trash2 size={12} /> Delete selected
+            </button>
+          )}
+
+          <button
+            onClick={() => { setSelectedIds(new Set()); setConfirmDelete(false) }}
+            className="ml-auto text-xs text-blue-500 hover:text-blue-700"
+          >
+            Clear selection
+          </button>
+        </div>
+      )}
+
       <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="bg-slate-50 border-b border-slate-200">
+                {/* Select-all checkbox */}
+                <th className="px-3 py-2 w-8">
+                  <input
+                    type="checkbox"
+                    checked={allPageSelected}
+                    ref={el => { if (el) el.indeterminate = !allPageSelected && somePageSelected }}
+                    onChange={toggleSelectAll}
+                    className="rounded accent-blue-600 cursor-pointer"
+                    title="Select all on this page"
+                  />
+                </th>
                 <th className="px-3 py-2 text-left font-semibold text-slate-600 whitespace-nowrap">Code</th>
                 <Th label="Dealer" sortKey="name" current={sortKey} dir={sortDir} onSort={toggleSort} />
                 <Th label="City" sortKey="city" current={sortKey} dir={sortDir} onSort={toggleSort} />
@@ -208,9 +359,28 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
                 const bank = bankFor(dealer.bank)
                 const auditorId = assignments.get(dealer.id) ?? null
                 const auditor = auditors.find(a => a.id === auditorId)
+                const isSelected = selectedIds.has(dealer.id)
+
+                const placesStatus = dealer.places_status ?? 'unverified'
+                const VerifyIcon = placesStatus === 'verified' ? CheckCircle : placesStatus === 'flagged' ? AlertTriangle : HelpCircle
+                const verifyClass = placesStatus === 'verified' ? 'text-emerald-500' : placesStatus === 'flagged' ? 'text-amber-500' : 'text-slate-300'
+                const verifyTitle = placesStatus === 'verified' ? 'Verified via Google Places' : placesStatus === 'flagged' ? 'Flagged – needs attention' : 'Not yet verified'
 
                 return (
-                  <tr key={dealer.id} className="hover:bg-slate-50 transition-colors">
+                  <tr
+                    key={dealer.id}
+                    className={`hover:bg-slate-50 transition-colors ${isSelected ? 'bg-blue-50/60' : ''}`}
+                  >
+                    {/* Row checkbox */}
+                    <td className="px-3 py-2">
+                      <input
+                        type="checkbox"
+                        checked={isSelected}
+                        onChange={() => toggleSelectRow(dealer.id)}
+                        className="rounded accent-blue-600 cursor-pointer"
+                      />
+                    </td>
+
                     {/* Code */}
                     <td className="px-3 py-2 whitespace-nowrap">
                       <span className="font-mono text-xs text-slate-400">{dealer.dealer_code ?? '—'}</span>
@@ -274,6 +444,14 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
                     {/* Flags */}
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-1.5 flex-wrap">
+                        {/* Verification status icon */}
+                        <Tip label={verifyTitle}>
+                          <span className="cursor-default flex items-center">
+                            <VerifyIcon size={13} className={verifyClass} />
+                          </span>
+                        </Tip>
+
+                        {/* Duplicate flag */}
                         <button
                           onClick={() => onPatchDealer(dealer.id, { is_duplicate: !dealer.is_duplicate })}
                           className={`text-xs px-1.5 py-0.5 rounded border transition-colors ${
@@ -324,39 +502,43 @@ export default function DealerList({ dealers, auditors, assignments, onAssign, o
                     <td className="px-3 py-2">
                       <div className="flex items-center gap-0.5">
                         {dealer.lat && dealer.lng && (
-                          <button
-                            onClick={() => onSelectDealer(dealer)}
-                            className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                            title="Show on map"
-                          >
-                            <MapPin size={14} />
-                          </button>
+                          <Tip label="Show on map">
+                            <button
+                              onClick={() => onSelectDealer(dealer)}
+                              className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                            >
+                              <MapPin size={14} />
+                            </button>
+                          </Tip>
                         )}
                         {dealer.google_maps_url && (
-                          <a
-                            href={dealer.google_maps_url}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                            title="Open in Google Maps"
-                          >
-                            <ExternalLink size={14} />
-                          </a>
+                          <Tip label="Open in Google Maps">
+                            <a
+                              href={dealer.google_maps_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="p-1 text-slate-400 hover:text-blue-600 transition-colors block"
+                            >
+                              <ExternalLink size={14} />
+                            </a>
+                          </Tip>
                         )}
-                        <button
-                          onClick={() => setEditingLocation(dealer)}
-                          className="p-1 text-slate-400 hover:text-emerald-600 transition-colors"
-                          title="Edit GPS location / Google Maps URL"
-                        >
-                          <LocateFixed size={14} />
-                        </button>
-                        <button
-                          onClick={() => setEditingDetails(dealer)}
-                          className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
-                          title="Edit name / city / code / frequency"
-                        >
-                          <Pencil size={14} />
-                        </button>
+                        <Tip label="Edit GPS location / Maps URL">
+                          <button
+                            onClick={() => setEditingLocation(dealer)}
+                            className="p-1 text-slate-400 hover:text-emerald-600 transition-colors"
+                          >
+                            <LocateFixed size={14} />
+                          </button>
+                        </Tip>
+                        <Tip label="Edit name / city / code / frequency">
+                          <button
+                            onClick={() => setEditingDetails(dealer)}
+                            className="p-1 text-slate-400 hover:text-blue-600 transition-colors"
+                          >
+                            <Pencil size={14} />
+                          </button>
+                        </Tip>
                       </div>
                     </td>
                   </tr>

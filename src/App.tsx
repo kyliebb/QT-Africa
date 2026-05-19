@@ -1,5 +1,5 @@
 import { useState } from 'react'
-import { LayoutDashboard, Map, List, Users, RefreshCw, AlertCircle, MapPin, ExternalLink, Pencil, BarChart2, MapPinCheck, LogOut } from 'lucide-react'
+import { LayoutDashboard, Map, List, Users, RefreshCw, AlertCircle, BarChart2, MapPinCheck, LogOut } from 'lucide-react'
 import { useData } from './hooks/useData'
 import { useAuth } from './hooks/useAuth'
 import { signOut } from './lib/auth'
@@ -10,10 +10,10 @@ import DealerMap from './components/DealerMap'
 import AuditorPanel from './components/AuditorPanel'
 import AuditorWorkload from './components/AuditorWorkload'
 import LocationEditModal from './components/LocationEditModal'
+import MapDealerPanel from './components/MapDealerPanel'
 import LoginPage from './components/LoginPage'
 import PlacesVerification from './components/PlacesVerification'
 import type { FilterState, Dealer } from './types'
-import { BANKS } from './types'
 
 type Tab = 'overview' | 'map' | 'list' | 'auditors' | 'workload' | 'places'
 
@@ -24,6 +24,7 @@ const DEFAULT_FILTERS: FilterState = {
   frequency: 'all',
   search: '',
   showDuplicates: false,
+  placesStatus: 'all',
 }
 
 export default function App() {
@@ -31,7 +32,7 @@ export default function App() {
 
   const {
     dealers, auditors, assignments, loading, error, reload,
-    addAuditor, editAuditor, removeAuditor, assign, bulkAssign, patchDealer,
+    addAuditor, editAuditor, removeAuditor, assign, bulkAssign, bulkDelete, patchDealer,
   } = useData()
 
   const [tab, setTab] = useState<Tab>('overview')
@@ -62,6 +63,7 @@ export default function App() {
     if (filters.showDuplicates && !d.is_duplicate) return false
     if (filters.auditorId === 'unassigned' && assignments.has(d.id)) return false
     if (filters.auditorId !== 'all' && filters.auditorId !== 'unassigned' && assignments.get(d.id) !== filters.auditorId) return false
+    if (filters.placesStatus !== 'all' && (d.places_status ?? 'unverified') !== filters.placesStatus) return false
     if (filters.search) {
       const q = filters.search.toLowerCase()
       if (!d.name.toLowerCase().includes(q) && !d.city.toLowerCase().includes(q)) return false
@@ -214,73 +216,16 @@ export default function App() {
             </div>
             <div className="space-y-3 overflow-y-auto">
               {/* Dealer info panel */}
-              {mapFocusedDealer && (() => {
-                const d = dealers.find(x => x.id === mapFocusedDealer.id) ?? mapFocusedDealer
-                const bank = BANKS.find(b => b.value === d.bank)
-                const auditorId = assignments.get(d.id)
-                const auditor = auditors.find(a => a.id === auditorId)
-                return (
-                  <div className="bg-white rounded-lg border border-slate-200 shadow-sm p-3 space-y-2">
-                    <div className="flex items-start justify-between gap-2">
-                      <div className="min-w-0">
-                        <p className="font-semibold text-slate-800 text-sm truncate">{d.name}</p>
-                        {d.dealer_code && (
-                          <p className="font-mono text-xs text-slate-400">{d.dealer_code}</p>
-                        )}
-                      </div>
-                      <button
-                        onClick={() => setEditingLocationDealer(d)}
-                        className="shrink-0 p-1.5 rounded-lg hover:bg-amber-50 text-slate-400 hover:text-amber-600 transition-colors"
-                        title="Edit location"
-                      >
-                        <Pencil size={14} />
-                      </button>
-                    </div>
-
-                    <div className="text-xs text-slate-600 space-y-1">
-                      <div className="flex items-center gap-1.5">
-                        <MapPin size={11} className="text-slate-400 shrink-0" />
-                        <span>{d.city}, {d.province}</span>
-                      </div>
-                      {d.full_address && (
-                        <p className="text-slate-400 pl-4 leading-tight">{d.full_address}</p>
-                      )}
-                    </div>
-
-                    <div className="flex items-center gap-2 flex-wrap">
-                      <span
-                        className="inline-flex items-center px-2 py-0.5 rounded-full text-xs font-medium text-white"
-                        style={{ backgroundColor: bank?.colour ?? '#94a3b8' }}
-                      >
-                        {bank?.label ?? d.bank}
-                      </span>
-                      <span className="text-xs text-slate-500">{d.audit_frequency}d frequency</span>
-                    </div>
-
-                    {auditor && (
-                      <div className="flex items-center gap-1.5 text-xs">
-                        <div className="w-2.5 h-2.5 rounded-full shrink-0" style={{ backgroundColor: auditor.colour }} />
-                        <span className="text-slate-600">{auditor.name}</span>
-                      </div>
-                    )}
-
-                    {d.lat && d.lng && (
-                      <p className="text-xs font-mono text-slate-400">{d.lat.toFixed(5)}, {d.lng.toFixed(5)}</p>
-                    )}
-
-                    {d.google_maps_url && (
-                      <a
-                        href={d.google_maps_url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="inline-flex items-center gap-1 text-xs text-blue-600 hover:text-blue-800"
-                      >
-                        <ExternalLink size={11} /> Open in Google Maps
-                      </a>
-                    )}
-                  </div>
-                )
-              })()}
+              {mapFocusedDealer && (
+                <MapDealerPanel
+                  key={mapFocusedDealer.id}
+                  dealer={dealers.find(x => x.id === mapFocusedDealer.id) ?? mapFocusedDealer}
+                  auditors={auditors}
+                  assignments={assignments}
+                  onPatchDealer={patchDealer}
+                  onEditLocation={() => setEditingLocationDealer(dealers.find(x => x.id === mapFocusedDealer.id) ?? mapFocusedDealer)}
+                />
+              )}
 
               <FilterBar
                 filters={filters}
@@ -313,6 +258,8 @@ export default function App() {
               auditors={auditors}
               assignments={assignments}
               onAssign={assign}
+              onBulkAssign={bulkAssign}
+              onBulkDelete={bulkDelete}
               onPatchDealer={patchDealer}
               onSelectDealer={handleSelectDealer}
             />

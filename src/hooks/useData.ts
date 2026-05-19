@@ -3,7 +3,7 @@ import type { Dealer, Auditor } from '../types'
 import {
   fetchDealers, fetchAuditors, fetchAssignments,
   createAuditor, updateAuditor, deleteAuditor,
-  assignDealer, unassignDealer, bulkAssignDealers,
+  assignDealer, unassignDealer, bulkAssignDealers, bulkDeleteDealers,
   updateDealer,
 } from '../lib/supabase'
 
@@ -75,11 +75,21 @@ export function useData() {
     setDealers(prev => prev.map(d => d.id === id ? { ...d, ...patch } : d))
   }
 
+  const bulkDelete = async (dealerIds: string[]) => {
+    await bulkDeleteDealers(dealerIds)
+    setDealers(prev => prev.filter(d => !dealerIds.includes(d.id)))
+    setAssignments(prev => {
+      const next = new Map(prev)
+      dealerIds.forEach(id => next.delete(id))
+      return next
+    })
+  }
+
   return {
     dealers, auditors, assignments,
     loading, error,
     addAuditor, editAuditor, removeAuditor,
-    assign, bulkAssign, patchDealer,
+    assign, bulkAssign, bulkDelete, patchDealer,
     reload: load,
   }
 }

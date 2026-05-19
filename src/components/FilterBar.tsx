@@ -66,6 +66,18 @@ export default function FilterBar({ filters, auditors, onChange, totalVisible }:
         ]}
       />
 
+      {/* Verification status */}
+      <Select
+        value={filters.placesStatus}
+        onChange={v => set({ placesStatus: v as FilterState['placesStatus'] })}
+        options={[
+          { value: 'all', label: 'All Statuses' },
+          { value: 'verified', label: 'Verified' },
+          { value: 'unverified', label: 'Unverified' },
+          { value: 'flagged', label: 'Flagged' },
+        ]}
+      />
+
       {/* Duplicates toggle */}
       <label className="flex items-center gap-1.5 text-sm text-slate-600 cursor-pointer select-none whitespace-nowrap">
         <input

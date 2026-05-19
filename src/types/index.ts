@@ -61,6 +61,7 @@ export interface FilterState {
   frequency: number | 'all'
   search: string
   showDuplicates: boolean
+  placesStatus: 'all' | 'verified' | 'unverified' | 'flagged'
 }
 
 export const PROVINCES: Province[] = [

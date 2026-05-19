@@ -88,3 +88,9 @@ export const bulkAssignDealers = async (dealerIds: string[], auditorId: string):
   const { error } = await supabase.from('assignments').upsert(rows)
   if (error) throw error
 }
+
+export const bulkDeleteDealers = async (dealerIds: string[]): Promise<void> => {
+  await supabase.from('assignments').delete().in('dealer_id', dealerIds)
+  const { error } = await supabase.from('dealers').delete().in('id', dealerIds)
+  if (error) throw error
+}
