@@ -222,7 +222,6 @@ export default function App() {
                   dealer={dealers.find(x => x.id === mapFocusedDealer.id) ?? mapFocusedDealer}
                   auditors={auditors}
                   assignments={assignments}
-                  onPatchDealer={patchDealer}
                   onEditLocation={() => setEditingLocationDealer(dealers.find(x => x.id === mapFocusedDealer.id) ?? mapFocusedDealer)}
                 />
               )}

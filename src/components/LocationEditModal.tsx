@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { X, MapPin, ExternalLink, Search } from 'lucide-react'
-import type { Dealer } from '../types'
+import type { Dealer, Province } from '../types'
+import { PROVINCES } from '../types'
 
 interface Props {
   dealer: Dealer
@@ -16,29 +17,23 @@ interface ParsedLocation {
 }
 
 function parseGoogleMapsUrl(url: string): ParsedLocation | null {
-  // Extract place name from URL path — used as address hint
   const placeNameMatch = url.match(/\/maps\/place\/([^/@?]+)/)
   const address = placeNameMatch
     ? decodeURIComponent(placeNameMatch[1].replace(/\+/g, ' '))
     : undefined
 
-  // ChIJ... place_id in query string
   const placeIdMatch = url.match(/place_id:([A-Za-z0-9_-]+)/)
   const placeId = placeIdMatch?.[1]
 
-  // !3d / !4d — actual place position (more accurate than the @ map-centre)
   const d3Match = url.match(/!3d(-?\d+\.?\d*)!4d(-?\d+\.?\d*)/)
   if (d3Match) return { lat: parseFloat(d3Match[1]), lng: parseFloat(d3Match[2]), address, placeId }
 
-  // @LAT,LNG,ZOOMz — map centre fallback
   const atMatch = url.match(/@(-?\d+\.?\d*),(-?\d+\.?\d*)/)
   if (atMatch) return { lat: parseFloat(atMatch[1]), lng: parseFloat(atMatch[2]), address, placeId }
 
-  // ?q=LAT,LNG
   const qMatch = url.match(/[?&]q=(-?\d+\.?\d*),(-?\d+\.?\d*)/)
   if (qMatch) return { lat: parseFloat(qMatch[1]), lng: parseFloat(qMatch[2]), address }
 
-  // ll=LAT,LNG
   const llMatch = url.match(/[?&]ll=(-?\d+\.?\d*),(-?\d+\.?\d*)/)
   if (llMatch) return { lat: parseFloat(llMatch[1]), lng: parseFloat(llMatch[2]), address }
 
@@ -49,7 +44,18 @@ function isShortUrl(url: string) {
   return /maps\.app\.goo\.gl|goo\.gl\/maps/i.test(url)
 }
 
+function Label({ children, hint }: { children: React.ReactNode; hint?: string }) {
+  return (
+    <div className="mb-1">
+      <span className="block text-xs font-medium text-slate-600">{children}</span>
+      {hint && <span className="block text-xs text-slate-400 mt-0.5">{hint}</span>}
+    </div>
+  )
+}
+
 export default function LocationEditModal({ dealer, onSave, onClose }: Props) {
+  const [city, setCity] = useState(dealer.city)
+  const [province, setProvince] = useState<Province>(dealer.province)
   const [lat, setLat] = useState(String(dealer.lat ?? ''))
   const [lng, setLng] = useState(String(dealer.lng ?? ''))
   const [address, setAddress] = useState(dealer.full_address ?? '')
@@ -84,6 +90,8 @@ export default function LocationEditModal({ dealer, onSave, onClose }: Props) {
     const latNum = parseFloat(lat)
     const lngNum = parseFloat(lng)
     onSave({
+      city: city.trim() || dealer.city,
+      province,
       lat: isNaN(latNum) ? null : latNum,
       lng: isNaN(lngNum) ? null : lngNum,
       full_address: address.trim() || null,
@@ -100,11 +108,11 @@ export default function LocationEditModal({ dealer, onSave, onClose }: Props) {
 
   return (
     <div className="fixed inset-0 z-[1000] flex items-center justify-center p-4 bg-black/40">
-      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-lg max-h-[90vh] flex flex-col">
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-slate-200 shrink-0">
           <div>
-            <h2 className="font-semibold text-slate-800">Edit Location</h2>
+            <h2 className="font-semibold text-slate-800">Edit Location Details</h2>
             <p className="text-xs text-slate-500 mt-0.5 truncate max-w-xs">{dealer.name}</p>
           </div>
           <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-400 hover:text-slate-600">
@@ -112,12 +120,43 @@ export default function LocationEditModal({ dealer, onSave, onClose }: Props) {
           </button>
         </div>
 
-        <div className="px-5 py-4 space-y-4">
-          {/* Paste Google Maps URL */}
+        <div className="px-5 py-4 space-y-4 overflow-y-auto">
+
+          {/* ── City & Province ─────────────────────────────────────── */}
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1.5">
-              Paste a Google Maps URL to auto-fill coordinates
-            </label>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">City &amp; Province</p>
+            <div className="grid grid-cols-2 gap-3">
+              <div>
+                <Label hint="Proper casing, e.g. Cape Town">City</Label>
+                <input
+                  type="text"
+                  value={city}
+                  onChange={e => setCity(e.target.value)}
+                  placeholder="e.g. Cape Town"
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <Label hint="Select from the list">Province / Region</Label>
+                <select
+                  value={province}
+                  onChange={e => setProvince(e.target.value as Province)}
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-700"
+                >
+                  {PROVINCES.map(p => (
+                    <option key={p} value={p}>{p}</option>
+                  ))}
+                </select>
+              </div>
+            </div>
+          </div>
+
+          <div className="border-t border-slate-100" />
+
+          {/* ── Auto-fill from Google Maps URL ───────────────────────── */}
+          <div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">GPS Coordinates</p>
+            <Label hint="Paste a full Google Maps URL to auto-fill the coordinates below">Auto-fill from Google Maps URL</Label>
             <div className="flex gap-2">
               <input
                 type="text"
@@ -129,7 +168,7 @@ export default function LocationEditModal({ dealer, onSave, onClose }: Props) {
               />
               <button
                 onClick={handleParse}
-                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors"
+                className="flex items-center gap-1.5 px-3 py-2 bg-blue-600 text-white text-sm rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
               >
                 <Search size={13} />
                 Parse
@@ -155,12 +194,10 @@ export default function LocationEditModal({ dealer, onSave, onClose }: Props) {
             ) : null}
           </div>
 
-          <div className="border-t border-slate-100" />
-
           {/* Lat / Lng */}
           <div className="grid grid-cols-2 gap-3">
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Latitude</label>
+              <Label hint="Negative values for Southern Hemisphere">Latitude</Label>
               <input
                 type="number"
                 step="any"
@@ -171,7 +208,7 @@ export default function LocationEditModal({ dealer, onSave, onClose }: Props) {
               />
             </div>
             <div>
-              <label className="block text-xs font-medium text-slate-600 mb-1">Longitude</label>
+              <Label hint="Positive values for Eastern longitudes">Longitude</Label>
               <input
                 type="number"
                 step="any"
@@ -183,40 +220,46 @@ export default function LocationEditModal({ dealer, onSave, onClose }: Props) {
             </div>
           </div>
 
-          {/* Full address */}
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Full Address</label>
-            <input
-              type="text"
-              value={address}
-              onChange={e => setAddress(e.target.value)}
-              placeholder="123 Main St, City, 0001, South Africa"
-              className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+          <div className="border-t border-slate-100" />
 
-          {/* Google Maps URL */}
+          {/* ── Reference details ────────────────────────────────────── */}
           <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Google Maps URL</label>
-            <input
-              type="text"
-              value={mapsUrl}
-              onChange={e => setMapsUrl(e.target.value)}
-              placeholder="https://www.google.com/maps/place/..."
-              className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
+            <p className="text-xs font-semibold text-slate-500 uppercase tracking-wide mb-2">Reference Details</p>
 
-          {/* Place ID */}
-          <div>
-            <label className="block text-xs font-medium text-slate-600 mb-1">Google Place ID</label>
-            <input
-              type="text"
-              value={placeId}
-              onChange={e => setPlaceId(e.target.value)}
-              placeholder="ChIJ..."
-              className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
+            <div className="space-y-3">
+              <div>
+                <Label hint="Full street address including postal code">Full Address</Label>
+                <input
+                  type="text"
+                  value={address}
+                  onChange={e => setAddress(e.target.value)}
+                  placeholder="123 Main St, City, 0001, South Africa"
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <Label hint="Saved for external link — does not affect coordinates">Google Maps URL</Label>
+                <input
+                  type="text"
+                  value={mapsUrl}
+                  onChange={e => setMapsUrl(e.target.value)}
+                  placeholder="https://www.google.com/maps/place/..."
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+
+              <div>
+                <Label hint="Starts with ChIJ — filled automatically when parsing a Maps URL">Google Place ID</Label>
+                <input
+                  type="text"
+                  value={placeId}
+                  onChange={e => setPlaceId(e.target.value)}
+                  placeholder="ChIJ..."
+                  className="w-full text-sm border border-slate-300 rounded-lg px-3 py-2 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
           </div>
 
           {/* Preview link */}
@@ -228,14 +271,14 @@ export default function LocationEditModal({ dealer, onSave, onClose }: Props) {
               className="inline-flex items-center gap-1.5 text-xs text-blue-600 hover:text-blue-800"
             >
               <MapPin size={12} />
-              Preview on Google Maps
+              Preview coordinates on Google Maps
               <ExternalLink size={11} />
             </a>
           )}
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-200">
+        <div className="flex items-center justify-end gap-2 px-5 py-4 border-t border-slate-200 shrink-0">
           <button
             onClick={onClose}
             className="px-4 py-2 text-sm text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
